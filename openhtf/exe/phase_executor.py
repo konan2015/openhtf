@@ -26,8 +26,8 @@ returning openhtf.PhaseResult.CONTINUE.  These results are then acted upon
 accordingly and a new test run status is returned.
 
 Phases are always run in order and not allowed to loop back, though a phase may
-choose to repeat itself by returning REPEAT. Returning STOP will cause a test to
-stop early, allowing a test to detect a bad state and not waste any further
+choose to repeat itself by returning REPEAT. Returning STOP will cause a test
+to stop early, allowing a test to detect a bad state and not waste any further
 time. A phase should not return TIMEOUT or ABORT, those are handled by the
 framework.
 """
@@ -160,17 +160,27 @@ class PhaseExecutor(object):
     self.test_state = test_state
     self._current_phase_thread = None
 
-  def ExecutePhases(self):
+  def ExecutePhases(self, phases):
     """Executes each phase or skips them, yielding PhaseOutcome instances.
+
+    Args:
+      phases: List of phases to execute.
 
     Yields:
       PhaseOutcome instance that wraps the phase return value (or exception).
     """
-    while self.test_state.pending_phases:
-      result = self._ExecuteOnePhase(self.test_state.pending_phases[0])
-      if not result:
-        continue
-      yield result
+    for phase in phases:
+      while True:
+        outcome = self._ExecuteOnePhase(phase)
+        if outcome:
+          yield outcome
+
+          # If we're done with this phase, skip to the next one.
+          if outcome.phase_result is openhtf.PhaseResult.CONTINUE:
+            break
+        else:
+          # run_if was falsey, just skip this phase.
+          break
 
   def _ExecuteOnePhase(self, phase):
     """Executes the given phase, returning a PhaseOutcome."""
@@ -179,8 +189,6 @@ class PhaseExecutor(object):
     # Check this as early as possible.
     if phase.options.run_if and not phase.options.run_if(phase_data):
       _LOG.info('Phase %s skipped due to run_if returning falsey.', phase.name)
-      if self.test_state.pending_phases:
-        self.test_state.pending_phases.pop(0)
       return
 
     _LOG.info('Executing phase %s', phase.name)
@@ -196,13 +204,8 @@ class PhaseExecutor(object):
 
     # Save the outcome of the phase and do some cleanup.
     phase_record.result = phase_outcome
-    self.test_state.record.phases.append(phase_record)
+    self.test_state.test_record.phases.append(phase_record)
     self.test_state.running_phase_record = None
-
-    # We're done with this phase, pop it from the pending phases.
-    if (phase_outcome.phase_result is openhtf.PhaseResult.CONTINUE and
-        self.test_state.pending_phases):
-      self.test_state.pending_phases.pop(0)
 
     _LOG.debug('Phase finished with outcome %s', phase_outcome)
     return phase_outcome
